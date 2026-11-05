@@ -393,30 +393,24 @@ class HonSelectEntity(HonEntity, SelectEntity):
         if command == "startProgram":
             self._device.sync_command("settings", "startProgram")
             if self._device.appliance_type == "AC":
+                is_uv = "uv" in option.lower()
                 if "onOffStatus" in self._device.commands["startProgram"].parameters:
                     self._device.commands["startProgram"].parameters["onOffStatus"].value = "1"
+                if "healthMode" in self._device.commands["startProgram"].parameters:
+                    self._device.commands["startProgram"].parameters["healthMode"].value = "1" if is_uv else "0"
                 if "settings.onOffStatus" in self._device.settings:
                     self._device.settings["settings.onOffStatus"].value = "1"
+                if "settings.healthMode" in self._device.settings:
+                    self._device.settings["settings.healthMode"].value = "1" if is_uv else "0"
         await self._device.commands[command].send()
         if command != "settings":
             self._device.sync_command(command, "settings")
-        if self._device.appliance_type == "AC" and command == "startProgram":
-            if "settings.onOffStatus" in self._device.settings:
-                self._device.settings["settings.onOffStatus"].value = "1"
-            mach_val = None
-            if "machMode" in self._device.commands["startProgram"].parameters:
-                mach_val = self._device.commands["startProgram"].parameters["machMode"].value
-            elif option in const.HON_HVAC_PROGRAM.values():
-                mach_map = {v: k for k, v in const.HON_HVAC_PROGRAM.items()}
-                hvac_mode = mach_map.get(option)
-                for number, mode in const.HON_HVAC_MODE.items():
-                    if mode == hvac_mode:
-                        mach_val = number
-                        break
-            if mach_val is not None and "settings.machMode" in self._device.settings:
-                with suppress(ValueError):
-                    self._device.settings["settings.machMode"].value = str(int(mach_val))
-            await self._device.commands["settings"].send()
+            if self._device.appliance_type == "AC" and command == "startProgram":
+                is_uv = "uv" in option.lower()
+                if "settings.onOffStatus" in self._device.settings:
+                    self._device.settings["settings.onOffStatus"].value = "1"
+                if "settings.healthMode" in self._device.settings:
+                    self._device.settings["settings.healthMode"].value = "1" if is_uv else "0"
         self.coordinator.async_set_updated_data({})
 
     @property
