@@ -258,19 +258,28 @@ class HonACClimateEntity(HonEntity, ClimateEntity):
         self._device.sync_command("settings", "startProgram")
         is_uv = "uv" in preset_mode.lower()
         if "onOffStatus" in self._device.commands["startProgram"].parameters:
-            self._device.commands["startProgram"].parameters["onOffStatus"].value = "1"
+            with suppress(ValueError):
+                self._device.commands["startProgram"].parameters["onOffStatus"].value = "1"
         if "healthMode" in self._device.commands["startProgram"].parameters:
-            self._device.commands["startProgram"].parameters["healthMode"].value = "1" if is_uv else "0"
+            param = self._device.commands["startProgram"].parameters["healthMode"]
+            if isinstance(param, HonParameterRange) and is_uv and param.max < 1:
+                param.max = 1
+            with suppress(ValueError):
+                param.value = "1" if is_uv else "0"
         if "settings.onOffStatus" in self._device.settings:
-            self._device.settings["settings.onOffStatus"].value = "1"
-        if "settings.healthMode" in self._device.settings:
-            self._device.settings["settings.healthMode"].value = "1" if is_uv else "0"
+            with suppress(ValueError):
+                self._device.settings["settings.onOffStatus"].value = "1"
         await self._device.commands["startProgram"].send()
         self._device.sync_command("startProgram", "settings")
         if "settings.onOffStatus" in self._device.settings:
-            self._device.settings["settings.onOffStatus"].value = "1"
+            with suppress(ValueError):
+                self._device.settings["settings.onOffStatus"].value = "1"
         if "settings.healthMode" in self._device.settings:
-            self._device.settings["settings.healthMode"].value = "1" if is_uv else "0"
+            param = self._device.settings["settings.healthMode"]
+            if isinstance(param, HonParameterRange) and is_uv and param.max < 1:
+                param.max = 1
+            with suppress(ValueError):
+                param.value = "1" if is_uv else "0"
         self._set_temperature_bound()
         self._handle_coordinator_update(update=False)
         self.coordinator.async_set_updated_data({})

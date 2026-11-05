@@ -11,6 +11,7 @@ from homeassistant.core import callback
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.core import HomeAssistant
+from pyhon.parameter.range import HonParameterRange
 
 from . import const
 from .const import DOMAIN
@@ -395,22 +396,31 @@ class HonSelectEntity(HonEntity, SelectEntity):
             if self._device.appliance_type == "AC":
                 is_uv = "uv" in option.lower()
                 if "onOffStatus" in self._device.commands["startProgram"].parameters:
-                    self._device.commands["startProgram"].parameters["onOffStatus"].value = "1"
+                    with suppress(ValueError):
+                        self._device.commands["startProgram"].parameters["onOffStatus"].value = "1"
                 if "healthMode" in self._device.commands["startProgram"].parameters:
-                    self._device.commands["startProgram"].parameters["healthMode"].value = "1" if is_uv else "0"
+                    param = self._device.commands["startProgram"].parameters["healthMode"]
+                    if isinstance(param, HonParameterRange) and is_uv and param.max < 1:
+                        param.max = 1
+                    with suppress(ValueError):
+                        param.value = "1" if is_uv else "0"
                 if "settings.onOffStatus" in self._device.settings:
-                    self._device.settings["settings.onOffStatus"].value = "1"
-                if "settings.healthMode" in self._device.settings:
-                    self._device.settings["settings.healthMode"].value = "1" if is_uv else "0"
+                    with suppress(ValueError):
+                        self._device.settings["settings.onOffStatus"].value = "1"
         await self._device.commands[command].send()
         if command != "settings":
             self._device.sync_command(command, "settings")
             if self._device.appliance_type == "AC" and command == "startProgram":
                 is_uv = "uv" in option.lower()
                 if "settings.onOffStatus" in self._device.settings:
-                    self._device.settings["settings.onOffStatus"].value = "1"
+                    with suppress(ValueError):
+                        self._device.settings["settings.onOffStatus"].value = "1"
                 if "settings.healthMode" in self._device.settings:
-                    self._device.settings["settings.healthMode"].value = "1" if is_uv else "0"
+                    param = self._device.settings["settings.healthMode"]
+                    if isinstance(param, HonParameterRange) and is_uv and param.max < 1:
+                        param.max = 1
+                    with suppress(ValueError):
+                        param.value = "1" if is_uv else "0"
         self.coordinator.async_set_updated_data({})
 
     @property
