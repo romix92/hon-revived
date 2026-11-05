@@ -1,4 +1,5 @@
 import logging
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
 
@@ -255,12 +256,32 @@ class HonACClimateEntity(HonEntity, ClimateEntity):
         if program := self._device.settings.get("startProgram.program"):
             program.value = preset_mode
         self._device.sync_command("settings", "startProgram")
+        if "onOffStatus" in self._device.commands["startProgram"].parameters:
+            self._device.commands["startProgram"].parameters["onOffStatus"].value = "1"
+        if "settings.onOffStatus" in self._device.settings:
+            self._device.settings["settings.onOffStatus"].value = "1"
+        await self._device.commands["startProgram"].send()
         self._device.sync_command("startProgram", "settings")
+        if "settings.onOffStatus" in self._device.settings:
+            self._device.settings["settings.onOffStatus"].value = "1"
+        mach_val = None
+        if "machMode" in self._device.commands["startProgram"].parameters:
+            mach_val = self._device.commands["startProgram"].parameters["machMode"].value
+        elif preset_mode in HON_HVAC_PROGRAM.values():
+            mach_map = {v: k for k, v in HON_HVAC_PROGRAM.items()}
+            hvac_mode = mach_map.get(preset_mode)
+            for number, mode in HON_HVAC_MODE.items():
+                if mode == hvac_mode:
+                    mach_val = number
+                    break
+        if mach_val is not None and "settings.machMode" in self._device.settings:
+            with suppress(ValueError):
+                self._device.settings["settings.machMode"].value = str(int(mach_val))
+        await self._device.commands["settings"].send()
         self._set_temperature_bound()
         self._handle_coordinator_update(update=False)
         self.coordinator.async_set_updated_data({})
         self._attr_preset_mode = preset_mode
-        await self._device.commands["startProgram"].send()
         self.schedule_update_ha_state()
 
     @property
