@@ -390,6 +390,8 @@ class HonSelectEntity(HonEntity, SelectEntity):
         setting = self._device.settings[self.entity_description.key]
         setting.value = self._option_to_number(option, setting.values)
         command = self.entity_description.key.split(".")[0]
+        if command == "startProgram":
+            self._device.sync_command("settings", "startProgram")
         await self._device.commands[command].send()
         if command != "settings":
             self._device.sync_command(command, "settings")

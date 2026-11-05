@@ -238,6 +238,7 @@ class HonACClimateEntity(HonEntity, ClimateEntity):
         self.schedule_update_ha_state()
 
     async def async_turn_on(self, **kwargs: Any) -> None:
+        self._device.sync_command("settings", "startProgram")
         await self._device.commands["startProgram"].send()
         self._device.sync_command("startProgram", "settings")
 
@@ -254,6 +255,7 @@ class HonACClimateEntity(HonEntity, ClimateEntity):
         """Set the new preset mode."""
         if program := self._device.settings.get("startProgram.program"):
             program.value = preset_mode
+        self._device.sync_command("settings", "startProgram")
         self._device.sync_command("startProgram", "settings")
         self._set_temperature_bound()
         self._handle_coordinator_update(update=False)
