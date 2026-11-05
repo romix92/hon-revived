@@ -1,4 +1,5 @@
 import logging
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -438,22 +439,44 @@ class HonSwitchEntity(HonEntity, SwitchEntity):
     @property
     def is_on(self) -> bool | None:
         """Return True if entity is on."""
-        return self._device.get(self.entity_description.key, 0) == 1
+        with suppress(ValueError, TypeError):
+            return int(float(self._device.get(self.entity_description.key, 0))) == 1
+        return False
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        setting = self._device.settings[f"settings.{self.entity_description.key}"]
+        if not (
+            setting := self._device.settings.get(
+                f"settings.{self.entity_description.key}"
+            )
+        ):
+            return
         if type(setting) == HonParameter:
             return
-        setting.value = setting.max if isinstance(setting, HonParameterRange) else 1
+        if isinstance(setting, HonParameterRange):
+            if setting.max < 1:
+                setting.max = 1
+            setting.value = 1
+        else:
+            setting.value = 1
         self.schedule_update_ha_state()
         await self._device.commands["settings"].send()
         self.coordinator.async_set_updated_data({})
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        setting = self._device.settings[f"settings.{self.entity_description.key}"]
+        if not (
+            setting := self._device.settings.get(
+                f"settings.{self.entity_description.key}"
+            )
+        ):
+            return
         if type(setting) == HonParameter:
             return
-        setting.value = setting.min if isinstance(setting, HonParameterRange) else 0
+        if isinstance(setting, HonParameterRange):
+            if setting.min > 0:
+                setting.min = 0
+            setting.value = 0
+        else:
+            setting.value = 0
         self.schedule_update_ha_state()
         await self._device.commands["settings"].send()
         self.coordinator.async_set_updated_data({})
@@ -463,12 +486,12 @@ class HonSwitchEntity(HonEntity, SwitchEntity):
         """Return True if entity is available."""
         if not super().available:
             return False
-        if not self._device.get("remoteCtrValid", 1) == 1:
-            return False
+        with suppress(ValueError, TypeError):
+            if int(self._device.get("remoteCtrValid", 1)) != 1:
+                return False
         if self._device.get("attributes.lastConnEvent.category") == "DISCONNECTED":
             return False
-        setting = self._device.settings[f"settings.{self.entity_description.key}"]
-        if isinstance(setting, HonParameterRange) and len(setting.values) < 2:
+        if f"settings.{self.entity_description.key}" not in self._device.settings:
             return False
         return True
 
