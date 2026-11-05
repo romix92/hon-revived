@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import suppress
 from dataclasses import dataclass
 
 from homeassistant.components.select import SelectEntity, SelectEntityDescription
@@ -234,8 +235,17 @@ class HonConfigSelectEntity(HonEntity, SelectEntity):
 
     @property
     def current_option(self) -> str | None:
-        if not (setting := self._device.settings.get(self.entity_description.key)):
+        key = self.entity_description.key
+        if not (setting := self._device.settings.get(key)):
             return None
+        param_name = self.entity_description.key.split(".")[-1]
+        if (device_val := self._device.get(param_name)) is not None:
+            raw_val = str(device_val)
+            readable = get_readable(self.entity_description, raw_val)
+            if str(readable) in self._attr_options:
+                with suppress(ValueError):
+                    setting.value = raw_val
+                return str(readable)
         value = get_readable(self.entity_description, setting.value)
         if value not in self._attr_options:
             return None
@@ -282,10 +292,76 @@ class HonConfigSelectEntity(HonEntity, SelectEntity):
 class HonSelectEntity(HonEntity, SelectEntity):
     entity_description: HonSelectEntityDescription
 
+    def _get_current_program(self) -> str | None:
+        if self._device.appliance_type == "AC":
+            if (
+                int(self._device.get("10degreeHeatingStatus", 0)) == 1
+                and "iot_10_heating" in self._attr_options
+            ):
+                return "iot_10_heating"
+            if (
+                int(self._device.get("selfCleaning56Status", 0)) == 1
+                and "iot_self_clean_56" in self._attr_options
+            ):
+                return "iot_self_clean_56"
+            if (
+                int(self._device.get("selfCleaningStatus", 0)) == 1
+                and "iot_self_clean" in self._attr_options
+            ):
+                return "iot_self_clean"
+            if (
+                int(self._device.get("ch2oCleaningStatus", 0)) == 1
+                and "iot_purify" in self._attr_options
+            ):
+                return "iot_purify"
+
+            health = int(self._device.get("healthMode", 0)) == 1
+            mach = self._device.get("machMode")
+            if mach is not None:
+                with suppress(ValueError, TypeError):
+                    mach_int = int(mach)
+                    hvac = const.HON_HVAC_MODE.get(mach_int)
+                    if health and hvac is not None:
+                        uv_map = {
+                            const.HVACMode.AUTO: "iot_uv_and_auto",
+                            const.HVACMode.COOL: "iot_uv_and_cool",
+                            const.HVACMode.DRY: "iot_uv_and_dry",
+                            const.HVACMode.HEAT: "iot_uv_and_heat",
+                            const.HVACMode.FAN_ONLY: "iot_uv_and_fan",
+                        }
+                        if uv_map.get(hvac) in self._attr_options:
+                            return uv_map[hvac]
+                    if hvac is not None and hvac in const.HON_HVAC_PROGRAM:
+                        prog = const.HON_HVAC_PROGRAM[hvac]
+                        if prog in self._attr_options:
+                            return prog
+        if (
+            pr_name := self._device.get("programName")
+        ) and pr_name in self._attr_options:
+            return str(pr_name)
+        return None
+
     @property
     def current_option(self) -> str | None:
-        if not (setting := self._device.settings.get(self.entity_description.key)):
+        key = self.entity_description.key
+        if not (setting := self._device.settings.get(key)):
             return None
+
+        if self.entity_description.key == "startProgram.program":
+            if current_pr := self._get_current_program():
+                with suppress(ValueError):
+                    setting.value = current_pr
+                return current_pr
+
+        param_name = self.entity_description.key.split(".")[-1]
+        if (device_val := self._device.get(param_name)) is not None:
+            raw_val = str(device_val)
+            readable = get_readable(self.entity_description, raw_val)
+            if str(readable) in self._attr_options:
+                with suppress(ValueError):
+                    setting.value = raw_val
+                return str(readable)
+
         value = get_readable(self.entity_description, setting.value)
         if value not in self._attr_options:
             return None
