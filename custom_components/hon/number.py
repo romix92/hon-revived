@@ -9,6 +9,7 @@ from homeassistant.components.number import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTime, UnitOfTemperature
 from homeassistant.core import callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.core import HomeAssistant
@@ -258,13 +259,24 @@ class HonNumberEntity(HonEntity, NumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         setting = self._device.settings[self.entity_description.key]
+        old_val = setting.value
         if isinstance(setting, HonParameterRange):
             setting.value = value
         command = self.entity_description.key.split(".")[0]
-        await self._device.commands[command].send()
+        try:
+            await self._device.commands[command].send()
+        except Exception as exc:
+            if isinstance(setting, HonParameterRange):
+                setting.value = old_val
+            self._device.sync_params_to_command("settings")
+            self.schedule_update_ha_state()
+            raise HomeAssistantError(
+                f"Nie udało się ustawić wartości {value}: {exc}"
+            ) from exc
         if command != "settings":
             self._device.sync_command(command, "settings")
         self.coordinator.async_set_updated_data({})
+        self.schedule_update_ha_state()
 
     @callback
     def _handle_coordinator_update(self, update: bool = True) -> None:

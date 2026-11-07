@@ -236,25 +236,58 @@ class HonACClimateEntity(HonEntity, ClimateEntity):
         return mode
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
+        old_hvac_mode = getattr(self, "_attr_hvac_mode", None)
+        old_onoff = self._device.settings.get("settings.onOffStatus")
+        old_onoff_val = old_onoff.value if old_onoff else None
+        old_mach = self._device.settings.get("settings.machMode")
+        old_mach_val = old_mach.value if old_mach else None
+
         self._attr_hvac_mode = hvac_mode
-        if hvac_mode == HVACMode.OFF:
-            self._device.settings["settings.onOffStatus"].value = "0"
-            await self._device.commands["settings"].send()
-        else:
-            self._device.settings["settings.onOffStatus"].value = "1"
-            setting = self._device.settings["settings.machMode"]
-            modes = {HON_HVAC_MODE[int(number)]: number for number in setting.values}
-            if hvac_mode in modes:
-                setting.value = modes[hvac_mode]
+        try:
+            if hvac_mode == HVACMode.OFF:
+                if old_onoff:
+                    old_onoff.value = "0"
+                await self._device.commands["settings"].send()
             else:
-                await self.async_set_preset_mode(HON_HVAC_PROGRAM[hvac_mode])
-                return
-            await self._device.commands["settings"].send()
+                if old_onoff:
+                    old_onoff.value = "1"
+                setting = self._device.settings.get("settings.machMode")
+                if setting:
+                    modes = {HON_HVAC_MODE[int(number)]: number for number in setting.values}
+                    if hvac_mode in modes:
+                        setting.value = modes[hvac_mode]
+                    else:
+                        await self.async_set_preset_mode(HON_HVAC_PROGRAM[hvac_mode])
+                        return
+                await self._device.commands["settings"].send()
+        except Exception as exc:
+            self._attr_hvac_mode = old_hvac_mode
+            if old_onoff and old_onoff_val is not None:
+                old_onoff.value = old_onoff_val
+            if old_mach and old_mach_val is not None:
+                old_mach.value = old_mach_val
+            self._device.sync_params_to_command("settings")
+            self.schedule_update_ha_state()
+            raise HomeAssistantError(
+                f"Nie udało się zmienić trybu pracy na {hvac_mode}: {exc}"
+            ) from exc
         self.schedule_update_ha_state()
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        self._device.settings["settings.onOffStatus"].value = "1"
-        await self._device.commands["settings"].send()
+        old_onoff = self._device.settings.get("settings.onOffStatus")
+        old_onoff_val = old_onoff.value if old_onoff else None
+        if old_onoff:
+            old_onoff.value = "1"
+        try:
+            await self._device.commands["settings"].send()
+        except Exception as exc:
+            if old_onoff and old_onoff_val is not None:
+                old_onoff.value = old_onoff_val
+            self._device.sync_params_to_command("settings")
+            self.schedule_update_ha_state()
+            raise HomeAssistantError(
+                f"Nie udało się włączyć klimatyzatora: {exc}"
+            ) from exc
         self.schedule_update_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
@@ -267,8 +300,16 @@ class HonACClimateEntity(HonEntity, ClimateEntity):
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         """Set the new preset mode."""
-        if program := self._device.settings.get("startProgram.program"):
-            program.value = preset_mode
+        old_preset = getattr(self, "_attr_preset_mode", None)
+        prog_setting = self._device.settings.get("startProgram.program")
+        old_prog_val = prog_setting.value if prog_setting else None
+        onoff_setting = self._device.settings.get("settings.onOffStatus")
+        old_onoff_val = onoff_setting.value if onoff_setting else None
+        health_setting = self._device.settings.get("settings.healthMode")
+        old_health_val = health_setting.value if health_setting else None
+
+        if prog_setting:
+            prog_setting.value = preset_mode
         self._device.sync_command("settings", "startProgram")
         is_uv = "uv" in preset_mode.lower()
         if "onOffStatus" in self._device.commands["startProgram"].parameters:
@@ -280,16 +321,32 @@ class HonACClimateEntity(HonEntity, ClimateEntity):
                 param.max = 1
             with suppress(ValueError):
                 param.value = "1" if is_uv else "0"
-        if "settings.onOffStatus" in self._device.settings:
+        if onoff_setting:
             with suppress(ValueError):
-                self._device.settings["settings.onOffStatus"].value = "1"
-        await self._device.commands["startProgram"].send()
+                onoff_setting.value = "1"
+
+        try:
+            await self._device.commands["startProgram"].send()
+        except Exception as exc:
+            self._attr_preset_mode = old_preset
+            if prog_setting and old_prog_val is not None:
+                prog_setting.value = old_prog_val
+            if onoff_setting and old_onoff_val is not None:
+                onoff_setting.value = old_onoff_val
+            if health_setting and old_health_val is not None:
+                health_setting.value = old_health_val
+            self._device.sync_params_to_command("settings")
+            self.schedule_update_ha_state()
+            raise HomeAssistantError(
+                f"Nie udało się ustawić programu {preset_mode}: {exc}"
+            ) from exc
+
         self._device.sync_command("startProgram", "settings")
-        if "settings.onOffStatus" in self._device.settings:
+        if onoff_setting:
             with suppress(ValueError):
-                self._device.settings["settings.onOffStatus"].value = "1"
-        if "settings.healthMode" in self._device.settings:
-            param = self._device.settings["settings.healthMode"]
+                onoff_setting.value = "1"
+        if health_setting:
+            param = health_setting
             if isinstance(param, HonParameterRange) and is_uv and param.max < 1:
                 param.max = 1
             with suppress(ValueError):
@@ -323,12 +380,27 @@ class HonACClimateEntity(HonEntity, ClimateEntity):
             if current_onoff is not None:
                 self._device.settings["settings.onOffStatus"].value = str(int(current_onoff))
 
+        old_fan_mode = getattr(self, "_attr_fan_mode", None)
+        wind_setting = self._device.settings.get("settings.windSpeed")
+        old_wind_val = wind_setting.value if wind_setting else None
+
         fan_modes: dict[str, str] = {}
         for mode in reversed(self._device.settings["settings.windSpeed"].values):
             fan_modes[HON_FAN[int(mode)]] = mode
-        self._device.settings["settings.windSpeed"].value = str(fan_modes[fan_mode])
+        if wind_setting:
+            wind_setting.value = str(fan_modes[fan_mode])
         self._attr_fan_mode = fan_mode
-        await self._device.commands["settings"].send()
+        try:
+            await self._device.commands["settings"].send()
+        except Exception as exc:
+            self._attr_fan_mode = old_fan_mode
+            if wind_setting and old_wind_val is not None:
+                wind_setting.value = old_wind_val
+            self._device.sync_params_to_command("settings")
+            self.schedule_update_ha_state()
+            raise HomeAssistantError(
+                f"Nie udało się zmienić prędkości wentylatora na {fan_mode}: {exc}"
+            ) from exc
         self.schedule_update_ha_state()
 
     @property
@@ -354,8 +426,12 @@ class HonACClimateEntity(HonEntity, ClimateEntity):
             if current_onoff is not None:
                 self._device.settings["settings.onOffStatus"].value = str(int(current_onoff))
 
+        old_swing_mode = getattr(self, "_attr_swing_mode", None)
         horizontal = self._device.settings["settings.windDirectionHorizontal"]
         vertical = self._device.settings["settings.windDirectionVertical"]
+        old_h_val = horizontal.value
+        old_v_val = vertical.value
+
         if swing_mode in [SWING_BOTH, SWING_HORIZONTAL]:
             horizontal.value = "7"
         if swing_mode in [SWING_BOTH, SWING_VERTICAL]:
@@ -365,7 +441,17 @@ class HonACClimateEntity(HonEntity, ClimateEntity):
         if swing_mode in [SWING_OFF, SWING_VERTICAL] and horizontal.value == "7":
             horizontal.value = "0"
         self._attr_swing_mode = swing_mode
-        await self._device.commands["settings"].send()
+        try:
+            await self._device.commands["settings"].send()
+        except Exception as exc:
+            self._attr_swing_mode = old_swing_mode
+            horizontal.value = old_h_val
+            vertical.value = old_v_val
+            self._device.sync_params_to_command("settings")
+            self.schedule_update_ha_state()
+            raise HomeAssistantError(
+                f"Nie udało się zmienić trybu swing na {swing_mode}: {exc}"
+            ) from exc
         self.schedule_update_ha_state()
 
     @callback
@@ -459,20 +545,34 @@ class HonClimateEntity(HonEntity, ClimateEntity):
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         if len(self.hvac_modes) <= 1:
             return
-        if hvac_mode == HVACMode.OFF:
-            await self._device.commands["stopProgram"].send()
-        else:
-            await self._device.commands["startProgram"].send()
+        old_mode = getattr(self, "_attr_hvac_mode", None)
         self._attr_hvac_mode = hvac_mode
+        command = "stopProgram" if hvac_mode == HVACMode.OFF else "startProgram"
+        try:
+            await self._device.commands[command].send()
+        except Exception as exc:
+            self._attr_hvac_mode = old_mode
+            self.schedule_update_ha_state()
+            raise HomeAssistantError(
+                f"Nie udało się zmienić trybu na {hvac_mode}: {exc}"
+            ) from exc
         self.schedule_update_ha_state()
 
     async def async_turn_on(self) -> None:
         """Set the HVAC State to on."""
-        await self._device.commands["startProgram"].send()
+        try:
+            await self._device.commands["startProgram"].send()
+        except Exception as exc:
+            self.schedule_update_ha_state()
+            raise HomeAssistantError(f"Nie udało się włączyć: {exc}") from exc
 
     async def async_turn_off(self) -> None:
         """Set the HVAC State to off."""
-        await self._device.commands["stopProgram"].send()
+        try:
+            await self._device.commands["stopProgram"].send()
+        except Exception as exc:
+            self.schedule_update_ha_state()
+            raise HomeAssistantError(f"Nie udało się wyłączyć: {exc}") from exc
 
     @property
     def preset_mode(self) -> str | None:
@@ -486,6 +586,7 @@ class HonClimateEntity(HonEntity, ClimateEntity):
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         """Set the new preset mode."""
+        old_preset = getattr(self, "_attr_preset_mode", None)
         if preset_mode == "no_mode" and HVACMode.OFF in self.hvac_modes:
             command = "stopProgram"
         elif preset_mode == "no_mode":
@@ -493,7 +594,9 @@ class HonClimateEntity(HonEntity, ClimateEntity):
             self._device.commands["settings"].reset()
         else:
             command = "startProgram"
-        if program := self._device.settings.get(f"{command}.program"):
+        program = self._device.settings.get(f"{command}.program")
+        old_prog_val = program.value if program else None
+        if program:
             program.value = preset_mode
         zone = self._device.settings.get(f"{command}.zone")
         if zone and isinstance(self.entity_description.name, str):
@@ -502,7 +605,17 @@ class HonClimateEntity(HonEntity, ClimateEntity):
         self._set_temperature_bound()
         self._attr_preset_mode = preset_mode
         self.coordinator.async_set_updated_data({})
-        await self._device.commands[command].send()
+        try:
+            await self._device.commands[command].send()
+        except Exception as exc:
+            self._attr_preset_mode = old_preset
+            if program and old_prog_val is not None:
+                program.value = old_prog_val
+            self._device.sync_params_to_command("settings")
+            self.schedule_update_ha_state()
+            raise HomeAssistantError(
+                f"Nie udało się ustawić trybu {preset_mode}: {exc}"
+            ) from exc
         self.schedule_update_ha_state()
 
     def _set_temperature_bound(self) -> None:

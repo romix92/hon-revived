@@ -8,6 +8,7 @@ from homeassistant.components.select import SelectEntity, SelectEntityDescriptio
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTemperature, UnitOfTime, REVOLUTIONS_PER_MINUTE
 from homeassistant.core import callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.core import HomeAssistant
@@ -389,6 +390,7 @@ class HonSelectEntity(HonEntity, SelectEntity):
 
     async def async_select_option(self, option: str) -> None:
         setting = self._device.settings[self.entity_description.key]
+        old_val = setting.value
         setting.value = self._option_to_number(option, setting.values)
         command = self.entity_description.key.split(".")[0]
         if command == "startProgram":
@@ -407,7 +409,18 @@ class HonSelectEntity(HonEntity, SelectEntity):
                 if "settings.onOffStatus" in self._device.settings:
                     with suppress(ValueError):
                         self._device.settings["settings.onOffStatus"].value = "1"
-        await self._device.commands[command].send()
+        try:
+            await self._device.commands[command].send()
+        except Exception as exc:
+            setting.value = old_val
+            if command == "startProgram":
+                self._device.sync_params_to_command("startProgram")
+            self._device.sync_params_to_command("settings")
+            self.schedule_update_ha_state()
+            raise HomeAssistantError(
+                f"Nie udało się wybrać opcji {option}: {exc}"
+            ) from exc
+
         if command != "settings":
             self._device.sync_command(command, "settings")
             if self._device.appliance_type == "AC" and command == "startProgram":
@@ -422,6 +435,7 @@ class HonSelectEntity(HonEntity, SelectEntity):
                     with suppress(ValueError):
                         param.value = "1" if is_uv else "0"
         self.coordinator.async_set_updated_data({})
+        self.schedule_update_ha_state()
 
     @property
     def available(self) -> bool:

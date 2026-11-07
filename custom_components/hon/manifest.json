@@ -11,5 +11,5 @@
   "requirements": [
     "git+https://github.com/romix92/pyhon-revived.git@main#pyhon-revived==0.19.10"
   ],
-  "version": "0.19.12"
+  "version": "0.19.13"
 }
