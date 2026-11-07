@@ -53,22 +53,18 @@ class HonLockEntity(HonEntity, LockEntity):
     async def async_lock(self, **kwargs: Any) -> None:
         """Lock method."""
         setting = self._device.settings.get(f"settings.{self.entity_description.key}")
-        if type(setting) == HonParameter or setting is None:
+        if type(setting) is HonParameter or setting is None:
             return
-        setting.value = setting.max if isinstance(setting, HonParameterRange) else 1
-        self.schedule_update_ha_state()
-        await self._device.commands["settings"].send()
-        self.coordinator.async_set_updated_data({})
+        val = setting.max if isinstance(setting, HonParameterRange) else 1
+        self.debouncer.schedule_command("settings", {self.entity_description.key: val})
 
     async def async_unlock(self, **kwargs: Any) -> None:
         """Unlock method."""
         setting = self._device.settings[f"settings.{self.entity_description.key}"]
-        if type(setting) == HonParameter:
+        if type(setting) is HonParameter:
             return
-        setting.value = setting.min if isinstance(setting, HonParameterRange) else 0
-        self.schedule_update_ha_state()
-        await self._device.commands["settings"].send()
-        self.coordinator.async_set_updated_data({})
+        val = setting.min if isinstance(setting, HonParameterRange) else 0
+        self.debouncer.schedule_command("settings", {self.entity_description.key: val})
 
     @property
     def available(self) -> bool:
@@ -81,6 +77,8 @@ class HonLockEntity(HonEntity, LockEntity):
 
     @callback
     def _handle_coordinator_update(self, update: bool = True) -> None:
+        if self.debouncer.has_pending_changes:
+            self.debouncer.reapply_pending()
         self._attr_is_locked = self.is_locked
         if update:
             self.schedule_update_ha_state()

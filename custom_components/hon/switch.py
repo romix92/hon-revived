@@ -7,7 +7,6 @@ from typing import Any
 from homeassistant.components.switch import SwitchEntityDescription, SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import callback
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.core import HomeAssistant
@@ -451,26 +450,9 @@ class HonSwitchEntity(HonEntity, SwitchEntity):
             )
         ):
             return
-        if type(setting) == HonParameter:
+        if type(setting) is HonParameter:
             return
-        old_val = setting.value
-        if isinstance(setting, HonParameterRange):
-            if setting.max < 1:
-                setting.max = 1
-            setting.value = 1
-        else:
-            setting.value = 1
-        try:
-            await self._device.commands["settings"].send()
-        except Exception as exc:
-            setting.value = old_val
-            self._device.sync_params_to_command("settings")
-            self.schedule_update_ha_state()
-            raise HomeAssistantError(
-                f"Nie udało się włączyć {self.name}: {exc}"
-            ) from exc
-        self.schedule_update_ha_state()
-        self.coordinator.async_set_updated_data({})
+        self.debouncer.schedule_command("settings", {self.entity_description.key: 1})
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         if not (
@@ -479,26 +461,9 @@ class HonSwitchEntity(HonEntity, SwitchEntity):
             )
         ):
             return
-        if type(setting) == HonParameter:
+        if type(setting) is HonParameter:
             return
-        old_val = setting.value
-        if isinstance(setting, HonParameterRange):
-            if setting.min > 0:
-                setting.min = 0
-            setting.value = 0
-        else:
-            setting.value = 0
-        try:
-            await self._device.commands["settings"].send()
-        except Exception as exc:
-            setting.value = old_val
-            self._device.sync_params_to_command("settings")
-            self.schedule_update_ha_state()
-            raise HomeAssistantError(
-                f"Nie udało się wyłączyć {self.name}: {exc}"
-            ) from exc
-        self.schedule_update_ha_state()
-        self.coordinator.async_set_updated_data({})
+        self.debouncer.schedule_command("settings", {self.entity_description.key: 0})
 
     @property
     def available(self) -> bool:
@@ -516,6 +481,8 @@ class HonSwitchEntity(HonEntity, SwitchEntity):
 
     @callback
     def _handle_coordinator_update(self, update: bool = True) -> None:
+        if self.debouncer.has_pending_changes:
+            self.debouncer.reapply_pending()
         self._attr_is_on = self.is_on
         if update:
             self.schedule_update_ha_state()
@@ -530,32 +497,16 @@ class HonControlSwitchEntity(HonEntity, SwitchEntity):
         return self._device.get(self.entity_description.key, False)
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        self._device.sync_command(self.entity_description.turn_on_key, "settings")
-        try:
-            await self._device.commands[self.entity_description.turn_on_key].send()
-        except Exception as exc:
-            self._device.sync_params_to_command("settings")
-            self.schedule_update_ha_state()
-            raise HomeAssistantError(
-                f"Nie udało się włączyć {self.name}: {exc}"
-            ) from exc
-        self._device.attributes[self.entity_description.key] = True
-        self.coordinator.async_set_updated_data({})
-        self.schedule_update_ha_state()
+        self.debouncer.schedule_command(
+            self.entity_description.turn_on_key,
+            {self.entity_description.key: True},
+        )
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        self._device.sync_command(self.entity_description.turn_off_key, "settings")
-        try:
-            await self._device.commands[self.entity_description.turn_off_key].send()
-        except Exception as exc:
-            self._device.sync_params_to_command("settings")
-            self.schedule_update_ha_state()
-            raise HomeAssistantError(
-                f"Nie udało się wyłączyć {self.name}: {exc}"
-            ) from exc
-        self._device.attributes[self.entity_description.key] = False
-        self.coordinator.async_set_updated_data({})
-        self.schedule_update_ha_state()
+        self.debouncer.schedule_command(
+            self.entity_description.turn_off_key,
+            {self.entity_description.key: False},
+        )
 
     @property
     def available(self) -> bool:

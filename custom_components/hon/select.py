@@ -3,16 +3,15 @@ from __future__ import annotations
 import logging
 from contextlib import suppress
 from dataclasses import dataclass
+from typing import Any
 
 from homeassistant.components.select import SelectEntity, SelectEntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTemperature, UnitOfTime, REVOLUTIONS_PER_MINUTE
 from homeassistant.core import callback
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.core import HomeAssistant
-from pyhon.parameter.range import HonParameterRange
 
 from . import const
 from .const import DOMAIN
@@ -295,6 +294,10 @@ class HonSelectEntity(HonEntity, SelectEntity):
     entity_description: HonSelectEntityDescription
 
     def _get_current_program(self) -> str | None:
+        if (
+            pending_prog := self.debouncer.get_pending("program")
+        ) and pending_prog in self._attr_options:
+            return str(pending_prog)
         if self._device.appliance_type == "AC":
             if (
                 int(self._device.get("10degreeHeatingStatus", 0)) == 1
@@ -351,8 +354,11 @@ class HonSelectEntity(HonEntity, SelectEntity):
 
         if self.entity_description.key == "startProgram.program":
             if current_pr := self._get_current_program():
-                with suppress(ValueError):
-                    setting.value = current_pr
+                if hasattr(setting, "set_value"):
+                    setting.set_value(current_pr)
+                else:
+                    with suppress(ValueError):
+                        setting.value = current_pr
                 return current_pr
 
         param_name = self.entity_description.key.split(".")[-1]
@@ -390,52 +396,17 @@ class HonSelectEntity(HonEntity, SelectEntity):
 
     async def async_select_option(self, option: str) -> None:
         setting = self._device.settings[self.entity_description.key]
-        old_val = setting.value
-        setting.value = self._option_to_number(option, setting.values)
-        command = self.entity_description.key.split(".")[0]
+        new_val = self._option_to_number(option, setting.values)
+        command, param_name = self.entity_description.key.split(".")
         if command == "startProgram":
-            self._device.sync_command("settings", "startProgram")
+            changed: dict[str, Any] = {"program": new_val}
             if self._device.appliance_type == "AC":
                 is_uv = "uv" in option.lower()
-                if "onOffStatus" in self._device.commands["startProgram"].parameters:
-                    with suppress(ValueError):
-                        self._device.commands["startProgram"].parameters["onOffStatus"].value = "1"
-                if "healthMode" in self._device.commands["startProgram"].parameters:
-                    param = self._device.commands["startProgram"].parameters["healthMode"]
-                    if isinstance(param, HonParameterRange) and is_uv and param.max < 1:
-                        param.max = 1
-                    with suppress(ValueError):
-                        param.value = "1" if is_uv else "0"
-                if "settings.onOffStatus" in self._device.settings:
-                    with suppress(ValueError):
-                        self._device.settings["settings.onOffStatus"].value = "1"
-        try:
-            await self._device.commands[command].send()
-        except Exception as exc:
-            setting.value = old_val
-            if command == "startProgram":
-                self._device.sync_params_to_command("startProgram")
-            self._device.sync_params_to_command("settings")
-            self.schedule_update_ha_state()
-            raise HomeAssistantError(
-                f"Nie udało się wybrać opcji {option}: {exc}"
-            ) from exc
-
-        if command != "settings":
-            self._device.sync_command(command, "settings")
-            if self._device.appliance_type == "AC" and command == "startProgram":
-                is_uv = "uv" in option.lower()
-                if "settings.onOffStatus" in self._device.settings:
-                    with suppress(ValueError):
-                        self._device.settings["settings.onOffStatus"].value = "1"
-                if "settings.healthMode" in self._device.settings:
-                    param = self._device.settings["settings.healthMode"]
-                    if isinstance(param, HonParameterRange) and is_uv and param.max < 1:
-                        param.max = 1
-                    with suppress(ValueError):
-                        param.value = "1" if is_uv else "0"
-        self.coordinator.async_set_updated_data({})
-        self.schedule_update_ha_state()
+                changed["onOffStatus"] = "1"
+                changed["healthMode"] = "1" if is_uv else "0"
+            self.debouncer.schedule_command("startProgram", changed)
+        else:
+            self.debouncer.schedule_command(command, {param_name: new_val})
 
     @property
     def available(self) -> bool:
@@ -448,6 +419,8 @@ class HonSelectEntity(HonEntity, SelectEntity):
 
     @callback
     def _handle_coordinator_update(self, update: bool = True) -> None:
+        if self.debouncer.has_pending_changes:
+            self.debouncer.reapply_pending()
         self._attr_available = self.available
         self._attr_options = self.options
         self._attr_current_option = self.current_option

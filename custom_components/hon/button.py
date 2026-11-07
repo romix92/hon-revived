@@ -4,7 +4,6 @@ from pathlib import Path
 from homeassistant.components import persistent_notification
 from homeassistant.components.button import ButtonEntityDescription, ButtonEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.core import HomeAssistant
@@ -75,12 +74,7 @@ class HonButtonEntity(HonEntity, ButtonEntity):
     entity_description: ButtonEntityDescription
 
     async def async_press(self) -> None:
-        try:
-            await self._device.commands[self.entity_description.key].send()
-        except Exception as exc:
-            raise HomeAssistantError(
-                f"Nie udało się wykonać akcji {self.name}: {exc}"
-            ) from exc
+        self.debouncer.schedule_command(self.entity_description.key)
 
     @property
     def available(self) -> bool:

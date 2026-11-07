@@ -83,9 +83,7 @@ class HonFanEntity(HonEntity, FanEntity):
     async def async_set_percentage(self, percentage: int) -> None:
         """Set the speed percentage of the fan."""
         mode = math.ceil(percentage_to_ranged_value(self._speed_range, percentage))
-        self._device.settings[self.entity_description.key].value = mode
-        await self._device.commands[self._command].send()
-        self.schedule_update_ha_state()
+        self.debouncer.schedule_command(self._command, {self._parameter: mode})
 
     @property
     def is_on(self) -> bool | None:
@@ -110,12 +108,12 @@ class HonFanEntity(HonEntity, FanEntity):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the entity off."""
-        self._device.settings[self.entity_description.key].value = 0
-        await self._device.commands[self._command].send()
-        self.schedule_update_ha_state()
+        self.debouncer.schedule_command(self._command, {self._parameter: 0})
 
     @callback
     def _handle_coordinator_update(self, update: bool = True) -> None:
+        if self.debouncer.has_pending_changes:
+            self.debouncer.reapply_pending()
         wind_speed = self._device.settings.get(self.entity_description.key)
         if isinstance(wind_speed, HonParameterRange) and len(wind_speed.values) > 1:
             self._wind_speed = wind_speed

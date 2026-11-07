@@ -103,23 +103,17 @@ class HonLightEntity(HonEntity, LightEntity):
             raise ValueError()
         if ColorMode.BRIGHTNESS in self._attr_supported_color_modes:
             percent = int(100 / 255 * kwargs.get(ATTR_BRIGHTNESS, 128))
-            light.value = round(light.max / 100 * percent)
-            if light.value == light.min:
-                self._attr_is_on = False
-            self._attr_brightness = self.brightness
+            val = round(light.max / 100 * percent)
         else:
-            light.value = light.max
-        await self._device.commands[self._command].send()
-        self.schedule_update_ha_state()
+            val = light.max
+        self.debouncer.schedule_command(self._command, {self._parameter: val})
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Instruct the light to turn off."""
         light = self._device.settings.get(self.entity_description.key)
         if not isinstance(light, HonParameterRange):
             raise ValueError()
-        light.value = light.min
-        await self._device.commands[self._command].send()
-        self.schedule_update_ha_state()
+        self.debouncer.schedule_command(self._command, {self._parameter: light.min})
 
     @property
     def brightness(self) -> int | None:
@@ -133,6 +127,8 @@ class HonLightEntity(HonEntity, LightEntity):
 
     @callback
     def _handle_coordinator_update(self, update: bool = True) -> None:
+        if self.debouncer.has_pending_changes:
+            self.debouncer.reapply_pending()
         self._attr_is_on = self.is_on
         self._attr_brightness = self.brightness
         if update:
