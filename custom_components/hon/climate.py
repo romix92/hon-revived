@@ -211,6 +211,13 @@ class HonACClimateEntity(HonEntity, ClimateEntity):
             raise HomeAssistantError(
                 f"Nie udało się zmienić temperatury na {int(temperature)}°C: {exc}"
             ) from exc
+        if temp_setting:
+            with suppress(ValueError, TypeError):
+                if "tempSel" in self._device.attributes.get("parameters", {}):
+                    self._device.attributes["parameters"]["tempSel"].update(
+                        str(int(temperature)), shield=True
+                    )
+        self.coordinator.async_set_updated_data({})
         self.schedule_update_ha_state()
 
     @property
@@ -368,7 +375,14 @@ class HonACClimateEntity(HonEntity, ClimateEntity):
     @property
     def fan_mode(self) -> str | None:
         """Return the fan setting."""
-        return HON_FAN[self._device.get("windSpeed")]
+        raw = self._device.get("windSpeed")
+        if raw is not None:
+            with suppress(ValueError, TypeError, KeyError):
+                if mode := HON_FAN.get(int(raw)):
+                    return mode
+        if hasattr(self, "_attr_fan_mode") and self._attr_fan_mode is not None:
+            return self._attr_fan_mode
+        return None
 
     async def async_set_fan_mode(self, fan_mode: str) -> None:
         if "settings.machMode" in self._device.settings:
@@ -401,20 +415,30 @@ class HonACClimateEntity(HonEntity, ClimateEntity):
             raise HomeAssistantError(
                 f"Nie udało się zmienić prędkości wentylatora na {fan_mode}: {exc}"
             ) from exc
+        if wind_setting:
+            with suppress(ValueError, TypeError):
+                target_val = int(wind_setting.value)
+                if "windSpeed" in self._device.attributes.get("parameters", {}):
+                    self._device.attributes["parameters"]["windSpeed"].update(
+                        str(target_val), shield=True
+                    )
+        self.coordinator.async_set_updated_data({})
         self.schedule_update_ha_state()
 
     @property
     def swing_mode(self) -> str | None:
         """Return the swing setting."""
-        horizontal = self._device.get("windDirectionHorizontal")
-        vertical = self._device.get("windDirectionVertical")
-        if horizontal == 7 and vertical == 8:
-            return SWING_BOTH
-        if horizontal == 7:
-            return SWING_HORIZONTAL
-        if vertical == 8:
-            return SWING_VERTICAL
-        return SWING_OFF
+        with suppress(ValueError, TypeError):
+            horizontal = int(self._device.get("windDirectionHorizontal", 0))
+            vertical = int(self._device.get("windDirectionVertical", 0))
+            if horizontal == 7 and vertical == 8:
+                return SWING_BOTH
+            if horizontal == 7:
+                return SWING_HORIZONTAL
+            if vertical == 8:
+                return SWING_VERTICAL
+            return SWING_OFF
+        return getattr(self, "_attr_swing_mode", SWING_OFF)
 
     async def async_set_swing_mode(self, swing_mode: str) -> None:
         if "settings.machMode" in self._device.settings:
@@ -452,6 +476,17 @@ class HonACClimateEntity(HonEntity, ClimateEntity):
             raise HomeAssistantError(
                 f"Nie udało się zmienić trybu swing na {swing_mode}: {exc}"
             ) from exc
+        if horizontal and vertical:
+            with suppress(ValueError, TypeError):
+                if "windDirectionHorizontal" in self._device.attributes.get("parameters", {}):
+                    self._device.attributes["parameters"]["windDirectionHorizontal"].update(
+                        str(horizontal.value), shield=True
+                    )
+                if "windDirectionVertical" in self._device.attributes.get("parameters", {}):
+                    self._device.attributes["parameters"]["windDirectionVertical"].update(
+                        str(vertical.value), shield=True
+                    )
+        self.coordinator.async_set_updated_data({})
         self.schedule_update_ha_state()
 
     @callback
@@ -533,6 +568,13 @@ class HonClimateEntity(HonEntity, ClimateEntity):
             raise HomeAssistantError(
                 f"Nie udało się zmienić temperatury na {int(temperature)}°C: {exc}"
             ) from exc
+        if temp_setting:
+            with suppress(ValueError, TypeError):
+                if "tempSel" in self._device.attributes.get("parameters", {}):
+                    self._device.attributes["parameters"]["tempSel"].update(
+                        str(int(temperature)), shield=True
+                    )
+        self.coordinator.async_set_updated_data({})
         self.schedule_update_ha_state()
 
     @property
