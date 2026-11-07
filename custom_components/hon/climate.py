@@ -21,6 +21,7 @@ from homeassistant.const import (
     UnitOfTemperature,
 )
 from homeassistant.core import callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.core import HomeAssistant
 from pyhon.appliance import HonAppliance
@@ -195,8 +196,21 @@ class HonACClimateEntity(HonEntity, ClimateEntity):
             if current_onoff is not None:
                 self._device.settings["settings.onOffStatus"].value = str(int(current_onoff))
 
-        self._device.settings["settings.tempSel"].value = str(int(temperature))
-        await self._device.commands["settings"].send()
+        temp_setting = self._device.settings.get("settings.tempSel")
+        old_val = temp_setting.value if temp_setting is not None else None
+
+        if temp_setting is not None:
+            temp_setting.value = str(int(temperature))
+        try:
+            await self._device.commands["settings"].send()
+        except Exception as exc:
+            if temp_setting is not None and old_val is not None:
+                temp_setting.value = old_val
+            self._device.sync_params_to_command("settings")
+            self.schedule_update_ha_state()
+            raise HomeAssistantError(
+                f"Nie udało się zmienić temperatury na {int(temperature)}°C: {exc}"
+            ) from exc
         self.schedule_update_ha_state()
 
     @property
@@ -419,8 +433,20 @@ class HonClimateEntity(HonEntity, ClimateEntity):
     async def async_set_temperature(self, **kwargs: Any) -> None:
         if (temperature := kwargs.get(ATTR_TEMPERATURE)) is None:
             return
-        self._device.settings[self.entity_description.key].value = str(int(temperature))
-        await self._device.commands["settings"].send()
+        temp_setting = self._device.settings.get(self.entity_description.key)
+        old_val = temp_setting.value if temp_setting is not None else None
+        if temp_setting is not None:
+            temp_setting.value = str(int(temperature))
+        try:
+            await self._device.commands["settings"].send()
+        except Exception as exc:
+            if temp_setting is not None and old_val is not None:
+                temp_setting.value = old_val
+            self._device.sync_params_to_command("settings")
+            self.schedule_update_ha_state()
+            raise HomeAssistantError(
+                f"Nie udało się zmienić temperatury na {int(temperature)}°C: {exc}"
+            ) from exc
         self.schedule_update_ha_state()
 
     @property
