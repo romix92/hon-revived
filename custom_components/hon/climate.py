@@ -239,7 +239,9 @@ class HonACClimateEntity(HonEntity, ClimateEntity):
     @property
     def preset_mode(self) -> str | None:
         """Return the current Preset for this channel."""
-        return None
+        if prog := self._device.get("programName"):
+            return prog
+        return getattr(self, "_attr_preset_mode", None)
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         """Set the new preset mode."""

@@ -97,8 +97,9 @@ class HonDeviceDebouncer:
             if setting := self._device.settings.get(f"settings.{k}"):
                 self._apply_param_to_setting(setting, v)
 
-        if target_cmd == "startProgram" and "startProgram" in self._device.commands:
-            self._device.sync_command("settings", "startProgram")
+        if "startProgram" in self._device.commands:
+            if target_cmd == "startProgram":
+                self._device.sync_command("settings", "startProgram")
             sp_params = self._device.commands["startProgram"].parameters
             for k, v in dirty.items():
                 if k == "program" or isinstance(v, bool):
@@ -127,6 +128,16 @@ class HonDeviceDebouncer:
 
         if "program" in dirty:
             self._device.attributes["programName"] = str(dirty["program"])
+            if self._device.appliance_type == "AC":
+                is_uv = "uv" in str(dirty["program"]).lower()
+                h_val = "1" if is_uv else "0"
+                if h_setting := self._device.settings.get("settings.healthMode"):
+                    self._apply_param_to_setting(h_setting, h_val)
+                if "startProgram" in self._device.commands:
+                    if h_param := self._device.commands["startProgram"].parameters.get("healthMode"):
+                        self._apply_param_to_setting(h_param, h_val)
+                if "healthMode" in params_dict:
+                    params_dict["healthMode"].update(h_val, shield=True)
 
         if self._device._extra:
             saved_prog = (
