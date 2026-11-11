@@ -141,12 +141,23 @@ class HonACClimateEntity(HonEntity, ClimateEntity):
         self._attr_temperature_unit = UnitOfTemperature.CELSIUS
         self._set_temperature_bound()
 
-        self._attr_hvac_modes = [HVACMode.OFF]
-        for mode in device.settings["settings.machMode"].values:
-            self._attr_hvac_modes.append(HON_HVAC_MODE[int(mode)])
-        self._attr_preset_modes = []
-        for mode in device.settings["startProgram.program"].values:
-            self._attr_preset_modes.append(mode)
+        hvac_modes = [HVACMode.OFF]
+        setting_mach = device.settings.get("settings.machMode")
+        if setting_mach and hasattr(setting_mach, "values"):
+            for mode in setting_mach.values:
+                with suppress(ValueError, TypeError, KeyError):
+                    hvac_m = HON_HVAC_MODE[int(mode)]
+                    if hvac_m not in hvac_modes:
+                        hvac_modes.append(hvac_m)
+        self._attr_hvac_modes = hvac_modes
+
+        preset_modes: list[str] = []
+        setting_prog = device.settings.get("startProgram.program")
+        if setting_prog and hasattr(setting_prog, "values"):
+            for mode in setting_prog.values:
+                if mode not in preset_modes:
+                    preset_modes.append(mode)
+        self._attr_preset_modes = preset_modes
         self._attr_swing_modes = [
             SWING_OFF,
             SWING_VERTICAL,
@@ -165,16 +176,17 @@ class HonACClimateEntity(HonEntity, ClimateEntity):
         self._handle_coordinator_update(update=False)
 
     def _set_temperature_bound(self) -> None:
-        temperature = self._device.settings["settings.tempSel"]
-        if not isinstance(temperature, HonParameterRange):
-            raise ValueError
-        self._attr_max_temp = temperature.max
-        self._attr_target_temperature_step = temperature.step
-        self._attr_min_temp = temperature.min
+        temperature = self._device.settings.get("settings.tempSel")
+        if isinstance(temperature, HonParameterRange):
+            self._attr_max_temp = temperature.max
+            self._attr_target_temperature_step = temperature.step
+            self._attr_min_temp = temperature.min
 
     @property
     def target_temperature(self) -> float | None:
         """Return the temperature we try to reach."""
+        if self.hvac_mode == HVACMode.FAN_ONLY:
+            return None
         return self._device.get("tempSel", 0.0)
 
     @property
@@ -183,6 +195,8 @@ class HonACClimateEntity(HonEntity, ClimateEntity):
         return self._device.get("tempIndoor", 0.0)
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
+        if self.hvac_mode == HVACMode.FAN_ONLY:
+            return
         if (temperature := kwargs.get(ATTR_TEMPERATURE)) is None:
             return
         self.debouncer.schedule_command("settings", {"tempSel": str(int(temperature))})
@@ -190,15 +204,19 @@ class HonACClimateEntity(HonEntity, ClimateEntity):
     @property
     def hvac_mode(self) -> HVACMode:
         on_off = self._device.get("onOffStatus")
-        mach = self._device.get("machMode")
-
-        if on_off == 0:
+        if str(on_off) in ("0", "False", "false"):
             return HVACMode.OFF
 
-        if mach not in HON_HVAC_MODE:
+        mach = self._device.get("machMode")
+        mach_int = None
+        with suppress(ValueError, TypeError):
+            if mach is not None:
+                mach_int = int(float(mach))
+
+        if mach_int is None or mach_int not in HON_HVAC_MODE:
             return getattr(self, "_attr_hvac_mode", HVACMode.AUTO)
 
-        mode = HON_HVAC_MODE[mach]
+        mode = HON_HVAC_MODE[mach_int]
 
         if mode == HVACMode.AUTO and getattr(self, "_attr_hvac_mode", None) not in (
             None,
@@ -213,11 +231,16 @@ class HonACClimateEntity(HonEntity, ClimateEntity):
         self._attr_hvac_mode = hvac_mode
         if hvac_mode == HVACMode.OFF:
             self.debouncer.schedule_command("settings", {"onOffStatus": "0"})
+        elif hvac_mode == HVACMode.FAN_ONLY:
+            is_uv = int(self._device.get("healthMode", 0)) == 1
+            await self.async_set_preset_mode("iot_uv_and_fan" if is_uv else "iot_fan")
         else:
             setting = self._device.settings.get("settings.machMode")
-            if setting:
+            if setting and hasattr(setting, "values"):
                 modes = {
-                    HON_HVAC_MODE[int(number)]: number for number in setting.values
+                    HON_HVAC_MODE[int(number)]: number
+                    for number in setting.values
+                    if HON_HVAC_MODE.get(int(number)) != HVACMode.FAN_ONLY
                 }
                 if hvac_mode in modes:
                     self.debouncer.schedule_command(
@@ -226,8 +249,9 @@ class HonACClimateEntity(HonEntity, ClimateEntity):
                     )
                     self._set_temperature_bound()
                     return
-                await self.async_set_preset_mode(HON_HVAC_PROGRAM[hvac_mode])
-                return
+                if prog := HON_HVAC_PROGRAM.get(hvac_mode):
+                    await self.async_set_preset_mode(prog)
+                    return
             self.debouncer.schedule_command("settings", {"onOffStatus": "1"})
 
     async def async_turn_on(self, **kwargs: Any) -> None:
@@ -441,12 +465,11 @@ class HonClimateEntity(HonEntity, ClimateEntity):
         self._set_temperature_bound()
 
     def _set_temperature_bound(self) -> None:
-        temperature = self._device.settings[self.entity_description.key]
-        if not isinstance(temperature, HonParameterRange):
-            raise ValueError
-        self._attr_max_temp = temperature.max
-        self._attr_target_temperature_step = temperature.step
-        self._attr_min_temp = temperature.min
+        temperature = self._device.settings.get(self.entity_description.key)
+        if isinstance(temperature, HonParameterRange):
+            self._attr_max_temp = temperature.max
+            self._attr_target_temperature_step = temperature.step
+            self._attr_min_temp = temperature.min
 
     @callback
     def _handle_coordinator_update(self, update: bool = True) -> None:

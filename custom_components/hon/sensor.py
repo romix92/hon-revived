@@ -916,9 +916,11 @@ class HonSensorEntity(HonEntity, SensorEntity):
     def _handle_coordinator_update(self, update: bool = True) -> None:
         value = self._device.get(self.entity_description.key, "")
         if self.entity_description.key == "programName":
-            if not (options := self._device.settings.get("startProgram.program")):
-                raise ValueError
-            self._attr_options = options.values + ["No Program"]
+            options = self._device.settings.get("startProgram.program")
+            if options and hasattr(options, "values") and options.values:
+                self._attr_options = list(options.values) + ["No Program"]
+            else:
+                self._attr_options = ["No Program"]
         elif self.entity_description.option_list is not None:
             self._attr_options = list(self.entity_description.option_list.values())
             value = str(get_readable(self.entity_description, value))

@@ -86,6 +86,34 @@ class HonDeviceDebouncer:
                                 str(sp_mach.value), shield=True
                             )
 
+            if self._device.appliance_type == "AC":
+                prog_lower = prog_val.lower()
+                s_mach = self._device.settings.get("settings.machMode")
+                mach_values = (
+                    s_mach.values if s_mach and hasattr(s_mach, "values") else []
+                )
+                ac_mach = None
+                if "fan" in prog_lower:
+                    ac_mach = "5" if "5" in mach_values else ("6" if "6" in mach_values else "5")
+                    dirty.pop("tempSel", None)
+                elif "cool" in prog_lower:
+                    ac_mach = "1"
+                elif "heat" in prog_lower:
+                    ac_mach = "4"
+                elif "dry" in prog_lower:
+                    ac_mach = "3" if "3" in mach_values else ("2" if "2" in mach_values else "3")
+                elif "auto" in prog_lower:
+                    ac_mach = "0"
+
+                if ac_mach is not None:
+                    dirty["machMode"] = ac_mach
+                    if s_mach:
+                        self._apply_param_to_setting(s_mach, ac_mach)
+                    if "machMode" in self._device.attributes.get("parameters", {}):
+                        self._device.attributes["parameters"]["machMode"].update(
+                            str(ac_mach), shield=True
+                        )
+
         for base_key in ("onOffStatus", "machMode"):
             if base_key in dirty:
                 if setting := self._device.settings.get(f"settings.{base_key}"):
@@ -131,6 +159,7 @@ class HonDeviceDebouncer:
             if self._device.appliance_type == "AC":
                 is_uv = "uv" in str(dirty["program"]).lower()
                 h_val = "1" if is_uv else "0"
+                dirty["healthMode"] = h_val
                 if h_setting := self._device.settings.get("settings.healthMode"):
                     self._apply_param_to_setting(h_setting, h_val)
                 if "startProgram" in self._device.commands:
