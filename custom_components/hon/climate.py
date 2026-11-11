@@ -14,6 +14,8 @@ from homeassistant.components.climate.const import (
     SWING_HORIZONTAL,
     ClimateEntityFeature,
     HVACMode,
+    FAN_AUTO,
+    FAN_LOW,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
@@ -236,7 +238,18 @@ class HonACClimateEntity(HonEntity, ClimateEntity):
             with suppress(ValueError, TypeError):
                 is_uv = int(float(self._device.get("healthMode", 0))) == 1
             fan_prog = "iot_uv_and_fan" if is_uv else "iot_fan"
-            await self.async_set_preset_mode(fan_prog)
+            current_ws = str(self._device.get("windSpeed", "3"))
+            speed_to_set = "3" if current_ws in ("4", "5", "0") else current_ws
+            self.debouncer.schedule_command(
+                "startProgram",
+                {
+                    "program": fan_prog,
+                    "onOffStatus": "1",
+                    "healthMode": "1" if is_uv else "0",
+                    "windSpeed": speed_to_set,
+                },
+            )
+            self._set_temperature_bound()
         else:
             setting = self._device.settings.get("settings.machMode")
             if setting and hasattr(setting, "values"):
@@ -274,22 +287,27 @@ class HonACClimateEntity(HonEntity, ClimateEntity):
         """Set the new preset mode."""
         is_uv = "uv" in preset_mode.lower()
         self._attr_preset_mode = preset_mode
-        self.debouncer.schedule_command(
-            "startProgram",
-            {
-                "program": preset_mode,
-                "onOffStatus": "1",
-                "healthMode": "1" if is_uv else "0",
-            },
-        )
+        changed: dict[str, Any] = {
+            "program": preset_mode,
+            "onOffStatus": "1",
+            "healthMode": "1" if is_uv else "0",
+        }
+        if "fan" in preset_mode.lower():
+            current_ws = str(self._device.get("windSpeed", "3"))
+            changed["windSpeed"] = "3" if current_ws in ("4", "5", "0") else current_ws
+        self.debouncer.schedule_command("startProgram", changed)
         self._set_temperature_bound()
 
     @property
     def fan_modes(self) -> list[str]:
         """Return the list of available fan modes."""
-        fan_modes = []
+        fan_modes: list[str] = []
+        is_fan_only = self.hvac_mode == HVACMode.FAN_ONLY
         for mode in reversed(self._device.settings["settings.windSpeed"].values):
-            fan_modes.append(HON_FAN[int(mode)])
+            fan_m = HON_FAN.get(int(mode))
+            if fan_m and (not is_fan_only or fan_m != FAN_AUTO):
+                if fan_m not in fan_modes:
+                    fan_modes.append(fan_m)
         return fan_modes
 
     @property
@@ -303,6 +321,8 @@ class HonACClimateEntity(HonEntity, ClimateEntity):
         return None
 
     async def async_set_fan_mode(self, fan_mode: str) -> None:
+        if self.hvac_mode == HVACMode.FAN_ONLY and fan_mode == FAN_AUTO:
+            fan_mode = FAN_LOW
         fan_modes: dict[str, str] = {}
         for mode in reversed(self._device.settings["settings.windSpeed"].values):
             fan_modes[HON_FAN[int(mode)]] = mode

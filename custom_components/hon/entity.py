@@ -120,6 +120,20 @@ class HonDeviceDebouncer:
                 if "fan" in prog_lower:
                     ac_mach = "5" if "5" in mach_values else ("6" if "6" in mach_values else "5")
                     dirty.pop("tempSel", None)
+                    # AC in Fan mode cannot have windSpeed on Auto (4 or 5); default to Low (3)
+                    raw_ws = dirty.get("windSpeed")
+                    if raw_ws is None and hasattr(self._device, "get"):
+                        with suppress(Exception):
+                            raw_ws = self._device.get("windSpeed")
+                    with suppress(ValueError, TypeError):
+                        if hasattr(raw_ws, "value"):
+                            raw_ws = raw_ws.value
+                    if (
+                        raw_ws is None
+                        or type(raw_ws).__name__ == "MagicMock"
+                        or str(raw_ws) in ("4", "5", "auto", "0", "")
+                    ):
+                        dirty["windSpeed"] = "3"
                 elif "cool" in prog_lower:
                     ac_mach = "1"
                 elif "heat" in prog_lower:
