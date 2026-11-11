@@ -233,11 +233,14 @@ class HonDeviceDebouncer:
                 self._dirty_params[k] = v
 
         if command == "startProgram":
-            self._pending_command = "startProgram"
+            if self._device.appliance_type == "AC":
+                self._pending_command = "settings"
+            else:
+                self._pending_command = "startProgram"
         elif command == "stopProgram":
             self._pending_command = "stopProgram"
         elif command == "settings":
-            if self._pending_command == "startProgram":
+            if self._pending_command == "startProgram" and self._device.appliance_type != "AC":
                 if changed_params and (
                     str(changed_params.get("onOffStatus")) == "0"
                     or "machMode" in changed_params
@@ -285,12 +288,16 @@ class HonDeviceDebouncer:
             self._apply_dirty_params(dirty_to_send, command_to_send)
 
             try:
-                await self._device.commands[command_to_send].send()
+                res = await self._device.commands[command_to_send].send()
+                if not res:
+                    raise Exception("API zwróciło wynik negatywny (błąd wykonania komendy)")
             except Exception as exc:
                 _LOGGER.error(
-                    "Nie udało się wysłać skumulowanych ustawień (%s): %s",
+                    "Nie udało się wysłać skumulowanych ustawień (%s) do urządzenia %s: %s | Parametry: %s",
                     command_to_send,
+                    self._device.unique_id,
                     exc,
+                    dirty_to_send,
                 )
                 if not self._has_pending_changes:
                     params_dict = self._device.attributes.get("parameters", {})
