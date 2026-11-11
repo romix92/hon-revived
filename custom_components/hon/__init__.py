@@ -27,6 +27,15 @@ CONFIG_SCHEMA = vol.Schema(
 )
 
 
+class HonDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
+    """DataUpdateCoordinator wyciszający powtarzalny spam debugowy w logach."""
+
+    def _set_updated_data(self, data: dict[str, Any]) -> None:
+        self.data = data
+        self.last_update_success = True
+        self.async_update_listeners()
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     session = aiohttp_client.async_get_clientsession(hass)
     if (config_dir := hass.config.config_dir) is None:
@@ -45,7 +54,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry, data={**entry.data, CONF_REFRESH_TOKEN: hon.api.auth.refresh_token}
     )
 
-    coordinator: DataUpdateCoordinator[dict[str, Any]] = DataUpdateCoordinator(
+    coordinator: DataUpdateCoordinator[dict[str, Any]] = HonDataUpdateCoordinator(
         hass, _LOGGER, name=DOMAIN
     )
     hon.subscribe_updates(coordinator.async_set_updated_data)

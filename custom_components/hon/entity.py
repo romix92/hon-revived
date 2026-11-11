@@ -69,11 +69,35 @@ class HonDeviceDebouncer:
 
     def _apply_dirty_params(self, dirty: dict[str, Any], target_cmd: str) -> None:
         """Apply all accumulated dirty parameters to settings, commands, and attributes."""
+        if self._device.appliance_type == "AC" and "healthMode" in dirty and "program" not in dirty:
+            current_prog = str(self._device.attributes.get("programName") or "").lower()
+            if "fan" in current_prog:
+                new_h = str(dirty["healthMode"])
+                new_fan_prog = "iot_uv_and_fan" if new_h == "1" else "iot_fan"
+                dirty["program"] = new_fan_prog
+                self._pending_command = "startProgram"
+                target_cmd = "startProgram"
+
         if "program" in dirty:
-            prog_val = str(dirty["program"])
+            prog_val = str(dirty["program"]).lower()
             if prog_setting := self._device.settings.get("startProgram.program"):
+                matching_prog = next(
+                    (v for v in getattr(prog_setting, "values", []) if v.lower() == prog_val),
+                    prog_val,
+                )
                 with suppress(ValueError, TypeError):
-                    prog_setting.value = prog_val
+                    prog_setting.value = matching_prog
+
+            if "startProgram" in self._device.commands:
+                sp_cmd = self._device.commands["startProgram"]
+                if hasattr(sp_cmd, "categories") and sp_cmd.categories:
+                    match_cat = next(
+                        (c for c in sp_cmd.categories if c.lower() == prog_val),
+                        None,
+                    )
+                    if match_cat:
+                        sp_cmd.category = match_cat
+
             self._device.sync_command("settings", "startProgram")
             if "startProgram" in self._device.commands and "machMode" not in dirty:
                 if sp_mach := self._device.commands["startProgram"].parameters.get(
@@ -233,14 +257,11 @@ class HonDeviceDebouncer:
                 self._dirty_params[k] = v
 
         if command == "startProgram":
-            if self._device.appliance_type == "AC":
-                self._pending_command = "settings"
-            else:
-                self._pending_command = "startProgram"
+            self._pending_command = "startProgram"
         elif command == "stopProgram":
             self._pending_command = "stopProgram"
         elif command == "settings":
-            if self._pending_command == "startProgram" and self._device.appliance_type != "AC":
+            if self._pending_command == "startProgram":
                 if changed_params and (
                     str(changed_params.get("onOffStatus")) == "0"
                     or "machMode" in changed_params
@@ -251,6 +272,15 @@ class HonDeviceDebouncer:
                 self._pending_command = "settings"
         else:
             self._pending_command = command
+
+        _LOGGER.debug(
+            "Debouncer: Zaplanowano komendę '%s' (pending: '%s') dla %s (parametry: %s, stan kumulacji: %s)",
+            command,
+            self._pending_command,
+            self._device.unique_id,
+            changed_params,
+            self._dirty_params,
+        )
 
         self._apply_dirty_params(
             self._dirty_params, self._pending_command or "settings"
@@ -284,6 +314,13 @@ class HonDeviceDebouncer:
         self._snapshot.clear()
         self._snapshot_attrs.clear()
 
+        _LOGGER.debug(
+            "Debouncer: Rozpoczęto wysyłanie komendy '%s' do %s | parametry: %s",
+            command_to_send,
+            self._device.unique_id,
+            dirty_to_send,
+        )
+
         async with self._send_lock:
             self._apply_dirty_params(dirty_to_send, command_to_send)
 
@@ -291,9 +328,14 @@ class HonDeviceDebouncer:
                 res = await self._device.commands[command_to_send].send()
                 if not res:
                     raise Exception("API zwróciło wynik negatywny (błąd wykonania komendy)")
+                _LOGGER.debug(
+                    "Debouncer: Komenda '%s' została pomyślnie wysłana i zaakceptowana dla %s",
+                    command_to_send,
+                    self._device.unique_id,
+                )
             except Exception as exc:
                 _LOGGER.error(
-                    "Nie udało się wysłać skumulowanych ustawień (%s) do urządzenia %s: %s | Parametry: %s",
+                    "BŁĄD: Nie udało się wysłać skumulowanych ustawień (%s) do urządzenia %s: %s | Parametry: %s",
                     command_to_send,
                     self._device.unique_id,
                     exc,

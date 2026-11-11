@@ -232,14 +232,11 @@ class HonACClimateEntity(HonEntity, ClimateEntity):
         if hvac_mode == HVACMode.OFF:
             self.debouncer.schedule_command("settings", {"onOffStatus": "0"})
         elif hvac_mode == HVACMode.FAN_ONLY:
-            setting = self._device.settings.get("settings.machMode")
-            mach_values = setting.values if setting and hasattr(setting, "values") else []
-            fan_mach = "5" if "5" in mach_values else ("6" if "6" in mach_values else "5")
-            self.debouncer.schedule_command(
-                "settings",
-                {"onOffStatus": "1", "machMode": fan_mach},
-            )
-            self._set_temperature_bound()
+            is_uv = False
+            with suppress(ValueError, TypeError):
+                is_uv = int(float(self._device.get("healthMode", 0))) == 1
+            fan_prog = "iot_uv_and_fan" if is_uv else "iot_fan"
+            await self.async_set_preset_mode(fan_prog)
         else:
             setting = self._device.settings.get("settings.machMode")
             if setting and hasattr(setting, "values"):
@@ -278,7 +275,7 @@ class HonACClimateEntity(HonEntity, ClimateEntity):
         is_uv = "uv" in preset_mode.lower()
         self._attr_preset_mode = preset_mode
         self.debouncer.schedule_command(
-            "settings",
+            "startProgram",
             {
                 "program": preset_mode,
                 "onOffStatus": "1",
