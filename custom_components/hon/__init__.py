@@ -27,6 +27,10 @@ CONFIG_SCHEMA = vol.Schema(
 )
 
 
+_COORDINATOR_LOGGER = logging.getLogger(f"{__name__}.coordinator")
+_COORDINATOR_LOGGER.setLevel(logging.INFO)
+
+
 class HonDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """DataUpdateCoordinator wyciszający powtarzalny spam debugowy w logach."""
 
@@ -34,6 +38,9 @@ class HonDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.data = data
         self.last_update_success = True
         self.async_update_listeners()
+
+    def async_set_updated_data(self, data: dict[str, Any]) -> None:
+        self._set_updated_data(data)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -55,7 +62,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     coordinator: DataUpdateCoordinator[dict[str, Any]] = HonDataUpdateCoordinator(
-        hass, _LOGGER, name=DOMAIN
+        hass, _COORDINATOR_LOGGER, name=DOMAIN
     )
     hon.subscribe_updates(coordinator.async_set_updated_data)
 
