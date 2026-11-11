@@ -921,12 +921,21 @@ class HonSensorEntity(HonEntity, SensorEntity):
                 self._attr_options = list(options.values) + ["No Program"]
             else:
                 self._attr_options = ["No Program"]
+            if value in ("", None):
+                value = "No Program"
+            elif str(value) not in self._attr_options:
+                self._attr_options.append(str(value))
         elif self.entity_description.option_list is not None:
             self._attr_options = list(self.entity_description.option_list.values())
             value = str(get_readable(self.entity_description, value))
+            if value == "":
+                value = None
+            elif value not in self._attr_options:
+                self._attr_options.append(value)
         if not value and self.entity_description.state_class is not None:
             self._attr_native_value = 0
-        self._attr_native_value = value
+        else:
+            self._attr_native_value = value
         if update:
             self.schedule_update_ha_state()
 
@@ -937,7 +946,7 @@ class HonConfigSensorEntity(HonEntity, SensorEntity):
     @callback
     def _handle_coordinator_update(self, update: bool = True) -> None:
         sensor = self._device.settings.get(self.entity_description.key, None)
-        value: float | str
+        value: float | str | None
         if self.entity_description.state_class is not None:
             if sensor and sensor.value:
                 value = (
@@ -951,9 +960,18 @@ class HonConfigSensorEntity(HonEntity, SensorEntity):
             value = sensor.value
         else:
             value = 0
-        if self.entity_description.option_list is not None and not value == 0:
+        if self.entity_description.option_list is not None:
             self._attr_options = list(self.entity_description.option_list.values())
-            value = get_readable(self.entity_description, value)
+            if value not in (0, "", None):
+                readable = str(get_readable(self.entity_description, value))
+                if readable == "":
+                    value = None
+                else:
+                    if readable not in self._attr_options:
+                        self._attr_options.append(readable)
+                    value = readable
+            else:
+                value = None
         self._attr_native_value = value
         if update:
             self.schedule_update_ha_state()
