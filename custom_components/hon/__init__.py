@@ -1,3 +1,4 @@
+from datetime import timedelta
 import logging
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,8 @@ CONFIG_SCHEMA = vol.Schema(
 _COORDINATOR_LOGGER = logging.getLogger(f"{__name__}.coordinator")
 _COORDINATOR_LOGGER.setLevel(logging.INFO)
 
+UPDATE_INTERVAL = timedelta(hours=3)
+
 
 class HonDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """DataUpdateCoordinator wyciszający powtarzalny spam debugowy w logach."""
@@ -61,8 +64,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry, data={**entry.data, CONF_REFRESH_TOKEN: hon.api.auth.refresh_token}
     )
 
+    async def _async_update_data() -> dict[str, Any]:
+        for appliance in hon.appliances:
+            try:
+                await appliance.update(force=True)
+            except Exception as error:  # pylint: disable=broad-except
+                _LOGGER.warning(
+                    "Periodic state refresh failed for %s: %r",
+                    appliance.nick_name,
+                    error,
+                )
+        return {}
+
     coordinator: DataUpdateCoordinator[dict[str, Any]] = HonDataUpdateCoordinator(
-        hass, _COORDINATOR_LOGGER, name=DOMAIN
+        hass,
+        _COORDINATOR_LOGGER,
+        name=DOMAIN,
+        update_method=_async_update_data,
+        update_interval=UPDATE_INTERVAL,
     )
     hon.subscribe_updates(coordinator.async_set_updated_data)
 
@@ -85,6 +104,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     unload = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload:
+        if "hon" in entry_data:
+            await entry_data["hon"].close()
         hass.data[DOMAIN].pop(entry.unique_id, None)
         if not hass.data[DOMAIN]:
             hass.data.pop(DOMAIN, None)
