@@ -339,9 +339,28 @@ class HonDeviceDebouncer:
             self._apply_dirty_params(dirty_to_send, command_to_send)
 
             try:
-                res = await self._device.commands[command_to_send].send()
-                if not res:
-                    raise Exception("API zwróciło wynik negatywny (błąd wykonania komendy)")
+                try:
+                    res = await self._device.commands[command_to_send].send()
+                    if not res:
+                        raise Exception("API zwróciło wynik negatywny (błąd wykonania komendy)")
+                except Exception as primary_exc:
+                    if (
+                        command_to_send == "startProgram"
+                        and self._device.appliance_type == "AC"
+                        and "settings" in self._device.commands
+                    ):
+                        _LOGGER.warning(
+                            "Komenda 'startProgram' nie powiodła się dla %s (%s) — próba fallbacku przez 'settings'",
+                            self._device.unique_id,
+                            primary_exc,
+                        )
+                        command_to_send = "settings"
+                        self._apply_dirty_params(dirty_to_send, "settings")
+                        res = await self._device.commands["settings"].send()
+                        if not res:
+                            raise Exception("API zwróciło wynik negatywny (błąd wykonania komendy settings)")
+                    else:
+                        raise
                 _LOGGER.debug(
                     "Debouncer: Komenda '%s' została pomyślnie wysłana i zaakceptowana dla %s",
                     command_to_send,
