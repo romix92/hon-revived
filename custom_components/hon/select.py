@@ -400,11 +400,14 @@ class HonSelectEntity(HonEntity, SelectEntity):
         command, param_name = self.entity_description.key.split(".")
         if command == "startProgram":
             changed: dict[str, Any] = {"program": new_val}
+            target_cmd = "startProgram"
             if self._device.appliance_type == "AC":
                 is_uv = "uv" in option.lower()
+                is_fan = "fan" in new_val.lower()
                 changed["onOffStatus"] = "1"
                 changed["healthMode"] = "1" if is_uv else "0"
-            self.debouncer.schedule_command("startProgram", changed)
+                target_cmd = "startProgram" if is_fan else "settings"
+            self.debouncer.schedule_command(target_cmd, changed)
         else:
             self.debouncer.schedule_command(command, {param_name: new_val})
 

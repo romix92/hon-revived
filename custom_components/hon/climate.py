@@ -286,16 +286,18 @@ class HonACClimateEntity(HonEntity, ClimateEntity):
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         """Set the new preset mode."""
         is_uv = "uv" in preset_mode.lower()
+        is_fan = "fan" in preset_mode.lower()
         self._attr_preset_mode = preset_mode
         changed: dict[str, Any] = {
             "program": preset_mode,
             "onOffStatus": "1",
             "healthMode": "1" if is_uv else "0",
         }
-        if "fan" in preset_mode.lower():
+        if is_fan:
             current_ws = str(self._device.get("windSpeed", "3"))
             changed["windSpeed"] = "3" if current_ws in ("4", "5", "0") else current_ws
-        self.debouncer.schedule_command("startProgram", changed)
+        command = "startProgram" if is_fan else "settings"
+        self.debouncer.schedule_command(command, changed)
         self._set_temperature_bound()
 
     @property

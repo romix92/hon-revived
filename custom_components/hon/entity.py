@@ -18,7 +18,7 @@ from .typedefs import HonEntityDescription
 
 _LOGGER = logging.getLogger(__name__)
 
-DEBOUNCE_DELAY = 2.0
+DEBOUNCE_DELAY = 1.2
 
 
 class HonDeviceDebouncer:
@@ -265,6 +265,15 @@ class HonDeviceDebouncer:
                             )
             self._has_pending_changes = True
 
+        if (
+            self._device.appliance_type == "AC"
+            and command == "startProgram"
+            and changed_params
+            and "program" in changed_params
+            and "fan" not in str(changed_params["program"]).lower()
+        ):
+            command = "settings"
+
         if changed_params:
             for k, v in changed_params.items():
                 self._dirty_params.pop(k, None)
@@ -279,9 +288,14 @@ class HonDeviceDebouncer:
                 if changed_params and (
                     str(changed_params.get("onOffStatus")) == "0"
                     or "machMode" in changed_params
+                    or (
+                        "program" in changed_params
+                        and "fan" not in str(changed_params["program"]).lower()
+                    )
                 ):
                     self._pending_command = "settings"
-                    self._dirty_params.pop("program", None)
+                    if "program" not in changed_params:
+                        self._dirty_params.pop("program", None)
             else:
                 self._pending_command = "settings"
         else:
@@ -310,32 +324,35 @@ class HonDeviceDebouncer:
             await asyncio.sleep(DEBOUNCE_DELAY)
         except asyncio.CancelledError:
             return
+        self._timer_task = None
         await self._async_execute_send()
 
     async def _async_execute_send(self) -> None:
         """Send accumulated command to the API."""
-        if not self._has_pending_changes:
-            return
-
-        command_to_send = self._pending_command or "settings"
-        dirty_to_send = dict(self._dirty_params)
-        snapshot_to_restore = dict(self._snapshot)
-        snapshot_attrs_to_restore = dict(self._snapshot_attrs)
-
-        self._has_pending_changes = False
-        self._pending_command = None
-        self._dirty_params.clear()
-        self._snapshot.clear()
-        self._snapshot_attrs.clear()
-
-        _LOGGER.debug(
-            "Debouncer: Rozpoczęto wysyłanie komendy '%s' do %s | parametry: %s",
-            command_to_send,
-            self._device.unique_id,
-            dirty_to_send,
-        )
-
         async with self._send_lock:
+            if self._timer_task is not None and not self._timer_task.done():
+                return
+            if not self._has_pending_changes:
+                return
+
+            command_to_send = self._pending_command or "settings"
+            dirty_to_send = dict(self._dirty_params)
+            snapshot_to_restore = dict(self._snapshot)
+            snapshot_attrs_to_restore = dict(self._snapshot_attrs)
+
+            self._has_pending_changes = False
+            self._pending_command = None
+            self._dirty_params.clear()
+            self._snapshot.clear()
+            self._snapshot_attrs.clear()
+
+            _LOGGER.debug(
+                "Debouncer: Rozpoczęto wysyłanie komendy '%s' do %s | parametry: %s",
+                command_to_send,
+                self._device.unique_id,
+                dirty_to_send,
+            )
+
             self._apply_dirty_params(dirty_to_send, command_to_send)
 
             try:
@@ -388,13 +405,21 @@ class HonDeviceDebouncer:
                     self._device.sync_params_to_command("settings")
                     self._device.sync_params_to_command("startProgram")
                     self._coordinator.async_set_updated_data({})
+                else:
+                    self._apply_dirty_params(
+                        self._dirty_params, self._pending_command or "settings"
+                    )
                 return
 
             if command_to_send != "settings":
                 self._device.sync_command(command_to_send, "settings")
             self._apply_dirty_params(dirty_to_send, "settings")
 
-            if not self._has_pending_changes:
+            if self._has_pending_changes and self._dirty_params:
+                self._apply_dirty_params(
+                    self._dirty_params, self._pending_command or "settings"
+                )
+            elif not self._has_pending_changes:
                 self._coordinator.async_set_updated_data({})
 
 
